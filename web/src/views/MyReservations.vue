@@ -85,20 +85,21 @@ function formatTime(isoStr) {
 }
 
 function canCheckIn(r) {
-  const slotStartMap = {
-    morning: { hour: 8, min: 0 },
-    afternoon: { hour: 13, min: 0 },
-    evening: { hour: 18, min: 0 }
+  const slotTimeMap = {
+    morning: { startHour: 8, startMin: 0, endHour: 12, endMin: 0 },
+    afternoon: { startHour: 13, startMin: 0, endHour: 17, endMin: 0 },
+    evening: { startHour: 18, startMin: 0, endHour: 22, endMin: 0 }
   }
-  const start = slotStartMap[r.time_slot]
-  if (!start) return false
+  const slot = slotTimeMap[r.time_slot]
+  if (!slot) return false
 
   const [y, m, d] = r.date.split('-').map(Number)
-  const slotStart = new Date(y, m - 1, d, start.hour, start.min)
+  const slotStart = new Date(y, m - 1, d, slot.startHour, slot.startMin)
+  const slotEnd = new Date(y, m - 1, d, slot.endHour, slot.endMin)
   const checkInOpen = new Date(slotStart.getTime() - 15 * 60 * 1000)
 
   const now = new Date()
-  return now >= checkInOpen
+  return now >= checkInOpen && now < slotEnd
 }
 
 async function loadReservations() {

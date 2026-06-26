@@ -1,5 +1,24 @@
 const db = require('./db');
 
+// #region debug-point init:debug-helper
+const _dbg = (() => {
+  const fs = require('fs');
+  const path = require('path');
+  const envPath = path.join(__dirname, '..', '.dbg', 'checkin-timing-bug.env');
+  let DEBUG_SERVER_URL = 'http://127.0.0.1:7777/event';
+  let DEBUG_SESSION_ID = 'checkin-timing-bug';
+  try {
+    const env = fs.readFileSync(envPath, 'utf8');
+    DEBUG_SERVER_URL = env.match(/DEBUG_SERVER_URL=(.+)/)?.[1] || DEBUG_SERVER_URL;
+    DEBUG_SESSION_ID = env.match(/DEBUG_SESSION_ID=(.+)/)?.[1] || DEBUG_SESSION_ID;
+  } catch {}
+  return (hypothesisId, location, msg, data = {}) => {
+    const payload = { sessionId: DEBUG_SESSION_ID, runId: 'post', hypothesisId, location, msg: '[DEBUG] ' + msg, data, ts: Date.now() };
+    require('http').request(DEBUG_SERVER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' } }).end(JSON.stringify(payload));
+  };
+})();
+// #endregion
+
 const RESERVATION_STATUS = {
   ACTIVE: 'active',
   CHECKED_IN: 'checked_in',
@@ -57,11 +76,39 @@ function getSlotTimeRange(timeSlot, dateStr) {
   );
   const slotStart = new Date(y, m - 1, d, slot.startHour, slot.startMin);
   const slotEnd = new Date(y, m - 1, d, slot.endHour, slot.endMin);
+  // #region debug-point H1:slot-time-range
+  _dbg('H1', 'reservation.js:getSlotTimeRange', 'slot time range parsed', {
+    timeSlot,
+    dateStr,
+    checkInOpen_iso: checkInOpen.toISOString(),
+    checkInOpen_local: checkInOpen.toString(),
+    checkInOpen_ts: checkInOpen.getTime(),
+    slotStart_iso: slotStart.toISOString(),
+    slotStart_ts: slotStart.getTime(),
+    slotEnd_iso: slotEnd.toISOString(),
+    slotEnd_ts: slotEnd.getTime(),
+    parsed: { y, m, d }
+  });
+  // #endregion
   return { checkInOpen, slotStart, slotEnd };
 }
 
 function getTodayDateStr() {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const result = `${y}-${m}-${day}`;
+  // #region debug-point H1:get-today-date
+  _dbg('H1', 'reservation.js:getTodayDateStr', 'today date from local time', {
+    result,
+    nowLocal: new Date().toString(),
+    nowISO: new Date().toISOString(),
+    tzOffset: new Date().getTimezoneOffset(),
+    isLocalDate: true
+  });
+  // #endregion
+  return result;
 }
 
 function findReservationById(id) {
@@ -81,18 +128,48 @@ function markExpiredAsNoShow() {
   const now = new Date();
   const today = getTodayDateStr();
 
+  // #region debug-point H3-H4:mark-expired-entry
+  _dbg('H3', 'reservation.js:markExpiredAsNoShow', 'start expired check', {
+    now_local: now.toString(),
+    now_ts: now.getTime(),
+    today,
+    now_iso: now.toISOString()
+  });
+  // #endregion
+
   const activeList = db.prepare(`
     SELECT id, date, time_slot FROM reservations WHERE status = ?
   `).all(RESERVATION_STATUS.ACTIVE);
 
   const updateStmt = db.prepare(
-    `UPDATE reservations SET status = ? WHERE id = ?`
+    `UPDATE reservations SET status = ? WHERE id = ? AND status = ?`
   );
 
   for (const r of activeList) {
-    const isExpired = r.date < today || _hasSlotExpired(r.date, r.time_slot, now);
+    const dateCmp = r.date < today;
+    const slotExpired = _hasSlotExpired(r.date, r.time_slot, now);
+    const isExpired = dateCmp || slotExpired;
+    // #region debug-point H3-H4:mark-expired-each
+    _dbg('H4', 'reservation.js:markExpiredAsNoShow', 'checking reservation', {
+      reservationId: r.id,
+      r_date: r.date,
+      today,
+      dateCmp_result: dateCmp,
+      dateCmp_operator: 'r.date < today',
+      time_slot: r.time_slot,
+      slotExpired,
+      isExpired,
+      updateHasStatusCondition: true
+    });
+    // #endregion
     if (isExpired) {
-      updateStmt.run(RESERVATION_STATUS.NO_SHOW, r.id);
+      const updateResult = updateStmt.run(RESERVATION_STATUS.NO_SHOW, r.id, RESERVATION_STATUS.ACTIVE);
+      // #region debug-point H3-H4:mark-expired-updated
+      _dbg('H3', 'reservation.js:markExpiredAsNoShow', 'marked as no_show', {
+        reservationId: r.id,
+        changes: updateResult.changes
+      });
+      // #endregion
     }
   }
 }
@@ -119,6 +196,23 @@ function validateCheckIn(reservation, userId, now = new Date()) {
     return { ok: false, status: 400, error: '无效时段' };
   }
 
+  // #region debug-point H2:validate-checkin-timing
+  _dbg('H2', 'reservation.js:validateCheckIn', 'timing check', {
+    reservationId: reservation.id,
+    now_local: now.toString(),
+    now_ts: now.getTime(),
+    checkInOpen_local: range.checkInOpen.toString(),
+    checkInOpen_ts: range.checkInOpen.getTime(),
+    slotEnd_local: range.slotEnd.toString(),
+    slotEnd_ts: range.slotEnd.getTime(),
+    cmp_before: now.getTime() < range.checkInOpen.getTime(),
+    cmp_after: now.getTime() >= range.slotEnd.getTime(),
+    date: reservation.date,
+    time_slot: reservation.time_slot,
+    status: reservation.status
+  });
+  // #endregion
+
   if (now < range.checkInOpen) {
     return {
       ok: false,
@@ -127,9 +221,22 @@ function validateCheckIn(reservation, userId, now = new Date()) {
     };
   }
   if (now >= range.slotEnd) {
-    db.prepare(
-      `UPDATE reservations SET status = ? WHERE id = ?`
-    ).run(RESERVATION_STATUS.NO_SHOW, reservation.id);
+    // #region debug-point H3:validate-checkin-expire-update
+    _dbg('H3', 'reservation.js:validateCheckIn', 'updating expired to no_show', {
+      reservationId: reservation.id,
+      currentStatus: reservation.status,
+      hasCondition: true
+    });
+    // #endregion
+    const updateResult = db.prepare(
+      `UPDATE reservations SET status = ? WHERE id = ? AND status = ?`
+    ).run(RESERVATION_STATUS.NO_SHOW, reservation.id, RESERVATION_STATUS.ACTIVE);
+    // #region debug-point H3:validate-checkin-expire-update-result
+    _dbg('H3', 'reservation.js:validateCheckIn', 'update result', {
+      reservationId: reservation.id,
+      changes: updateResult.changes
+    });
+    // #endregion
     return { ok: false, status: 400, error: '已过预约时段，无法签到' };
   }
 
@@ -137,9 +244,24 @@ function validateCheckIn(reservation, userId, now = new Date()) {
 }
 
 function performCheckIn(reservationId, userId) {
+  // #region debug-point H5:perform-checkin-entry
+  _dbg('H5', 'reservation.js:performCheckIn', 'checkin started', {
+    reservationId,
+    userId
+  });
+  // #endregion
+
   markExpiredAsNoShow();
 
   let reservation = findReservationById(reservationId);
+  // #region debug-point H5:after-first-query
+  _dbg('H5', 'reservation.js:performCheckIn', 'after first query', {
+    reservationId,
+    status: reservation?.status,
+    check_in_time: reservation?.check_in_time
+  });
+  // #endregion
+
   const freshCheck = validateCheckIn(reservation, userId);
   if (!freshCheck.ok) return freshCheck;
 
@@ -148,9 +270,29 @@ function performCheckIn(reservationId, userId) {
   if (!secondCheck.ok) return secondCheck;
 
   const checkInTime = now.toISOString();
-  db.prepare(
-    `UPDATE reservations SET status = ?, check_in_time = ? WHERE id = ?`
-  ).run(RESERVATION_STATUS.CHECKED_IN, checkInTime, reservationId);
+  // #region debug-point H5:perform-checkin-update
+  _dbg('H5', 'reservation.js:performCheckIn', 'updating to checked_in', {
+    reservationId,
+    currentStatus: reservation.status,
+    hasStatusCondition: true
+  });
+  // #endregion
+  const updateResult = db.prepare(
+    `UPDATE reservations SET status = ?, check_in_time = ? WHERE id = ? AND status = ?`
+  ).run(RESERVATION_STATUS.CHECKED_IN, checkInTime, reservationId, RESERVATION_STATUS.ACTIVE);
+
+  // #region debug-point H5:after-update
+  _dbg('H5', 'reservation.js:performCheckIn', 'after update', {
+    reservationId,
+    changes: updateResult.changes,
+    checkInTime,
+    updateHasStatusCondition: true
+  });
+  // #endregion
+
+  if (updateResult.changes === 0) {
+    return { ok: false, status: 400, error: '签到失败，预约状态已变更' };
+  }
 
   return { ok: true, check_in_time: checkInTime };
 }
@@ -209,10 +351,22 @@ function cancelReservation(reservationId, userId) {
   if (!reservation || !isReservationOwner(reservation, userId)) {
     return { ok: false, status: 403, error: '无权限' };
   }
+  if (reservation.status !== RESERVATION_STATUS.ACTIVE) {
+    return { ok: false, status: 400, error: '只能取消待签到的预约' };
+  }
 
-  db.prepare(
-    `UPDATE reservations SET status = ? WHERE id = ?`
-  ).run(RESERVATION_STATUS.CANCELLED, reservationId);
+  const range = getSlotTimeRange(reservation.time_slot, reservation.date);
+  if (range && new Date() >= range.slotStart) {
+    return { ok: false, status: 400, error: '时段已开始，无法取消' };
+  }
+
+  const updateResult = db.prepare(
+    `UPDATE reservations SET status = ? WHERE id = ? AND status = ?`
+  ).run(RESERVATION_STATUS.CANCELLED, reservationId, RESERVATION_STATUS.ACTIVE);
+
+  if (updateResult.changes === 0) {
+    return { ok: false, status: 400, error: '取消失败，预约状态已变更' };
+  }
 
   return { ok: true };
 }

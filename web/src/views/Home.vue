@@ -141,7 +141,13 @@ const success = ref('')
 const reserving = ref(false)
 const todayStats = reactive({ count: 0, slots: [] })
 
-const today = new Date().toISOString().split('T')[0]
+const today = (() => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+})();
 
 const maxCols = computed(() => {
   if (!seats.value.length) return 6
