@@ -25,6 +25,76 @@
       </div>
     </div>
     
+    <div class="card" style="margin-bottom: 20px;">
+      <div class="section-header">
+        <h3>签到情况</h3>
+        <div class="checkin-filters">
+          <input v-model="checkInDate" type="date" @change="loadCheckInData" />
+          <select v-model="checkInRoomId" @change="loadCheckInData">
+            <option value="">全部自习室</option>
+            <option v-for="room in rooms" :key="room.id" :value="room.id">{{ room.name }}</option>
+          </select>
+          <button class="btn btn-primary" @click="loadCheckInData" style="padding: 8px 16px; font-size: 13px;">查询</button>
+        </div>
+      </div>
+
+      <div v-if="checkInStats.total > 0" class="checkin-summary">
+        <div class="summary-item">
+          <span class="summary-label">总预约</span>
+          <span class="summary-value">{{ checkInStats.total }}</span>
+        </div>
+        <div class="summary-item checked-in">
+          <span class="summary-label">已签到</span>
+          <span class="summary-value">{{ checkInStats.checkedIn }}</span>
+        </div>
+        <div class="summary-item no-show">
+          <span class="summary-label">未签到</span>
+          <span class="summary-value">{{ checkInStats.noShow }}</span>
+        </div>
+        <div class="summary-item pending">
+          <span class="summary-label">待签到</span>
+          <span class="summary-value">{{ checkInStats.active }}</span>
+        </div>
+      </div>
+
+      <div v-if="checkInData.length" class="checkin-table-wrapper">
+        <table class="checkin-table">
+          <thead>
+            <tr>
+              <th>用户</th>
+              <th>座位</th>
+              <th>区域</th>
+              <th>自习室</th>
+              <th>时段</th>
+              <th>状态</th>
+              <th>签到时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in checkInData" :key="r.id" :class="'row-' + r.status">
+              <td>{{ r.username }}</td>
+              <td>{{ r.seat_number }}</td>
+              <td>
+                <span class="zone-tag" :class="r.zone === 'silent' ? 'zone-silent' : 'zone-discussion'">
+                  {{ r.zone === 'silent' ? '静音区' : '讨论区' }}
+                </span>
+              </td>
+              <td>{{ r.room_name }}</td>
+              <td>{{ slotLabels[r.time_slot] }}</td>
+              <td>
+                <span class="status-tag" :class="'tag-' + r.status">
+                  {{ statusLabels[r.status] }}
+                </span>
+              </td>
+              <td>{{ r.check_in_time ? formatTime(r.check_in_time) : '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-else-if="checkInLoaded" class="empty">该日期暂无预约记录</div>
+    </div>
+    
     <div v-if="selectedRoom" class="card">
       <div class="section-header">
         <h3>座位管理 - {{ currentRoom?.name }}</h3>
@@ -153,11 +223,37 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import Layout from '../components/Layout.vue'
 import http from '../http'
 
+const slotLabels = {
+  morning: '上午 (08:00-12:00)',
+  afternoon: '下午 (13:00-17:00)',
+  evening: '晚上 (18:00-22:00)'
+}
+
+const statusLabels = {
+  active: '待签到',
+  checked_in: '已签到',
+  no_show: '未签到',
+  cancelled: '已取消'
+}
+
 const rooms = ref([])
 const seats = ref([])
 const selectedRoom = ref(null)
 const error = ref('')
 const success = ref('')
+
+const checkInDate = ref(new Date().toISOString().split('T')[0])
+const checkInRoomId = ref('')
+const checkInData = ref([])
+const checkInLoaded = ref(false)
+
+const checkInStats = computed(() => {
+  const total = checkInData.value.length
+  const checkedIn = checkInData.value.filter(r => r.status === 'checked_in').length
+  const noShow = checkInData.value.filter(r => r.status === 'no_show').length
+  const active = checkInData.value.filter(r => r.status === 'active').length
+  return { total, checkedIn, noShow, active }
+})
 
 const showRoomModal = ref(false)
 const showSeatModal = ref(false)
@@ -175,6 +271,22 @@ const seatGroups = computed(() => ({
 function clearMsg() {
   error.value = ''
   success.value = ''
+}
+
+function formatTime(isoStr) {
+  const d = new Date(isoStr)
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`
+}
+
+async function loadCheckInData() {
+  try {
+    const params = { date: checkInDate.value }
+    if (checkInRoomId.value) params.room_id = checkInRoomId.value
+    checkInData.value = await http.get('/admin/reservations', { params })
+    checkInLoaded.value = true
+  } catch (e) {
+    error.value = '加载签到数据失败'
+  }
 }
 
 async function loadRooms() {
@@ -264,7 +376,10 @@ async function deleteSeat(id) {
   }
 }
 
-onMounted(loadRooms)
+onMounted(() => {
+  loadRooms()
+  loadCheckInData()
+})
 </script>
 
 <style scoped>
@@ -516,5 +631,116 @@ onMounted(loadRooms)
   justify-content: flex-end;
   gap: 10px;
   margin-top: 24px;
+}
+
+.checkin-filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.checkin-filters input,
+.checkin-filters select {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.checkin-summary {
+  display: flex;
+  gap: 24px;
+  padding: 16px 20px;
+  background: #f9fafb;
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.summary-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.summary-item.checked-in .summary-value {
+  color: #059669;
+}
+
+.summary-item.no-show .summary-value {
+  color: #dc2626;
+}
+
+.summary-item.pending .summary-value {
+  color: #d97706;
+}
+
+.checkin-table-wrapper {
+  overflow-x: auto;
+}
+
+.checkin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.checkin-table th {
+  padding: 10px 12px;
+  text-align: left;
+  background: #f3f4f6;
+  color: #374151;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.checkin-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f3f4f6;
+  color: #4b5563;
+}
+
+.checkin-table tr:hover {
+  background: #f9fafb;
+}
+
+.checkin-table tr.row-checked_in {
+  background: #f0fdf4;
+}
+
+.checkin-table tr.row-no_show {
+  background: #fef2f2;
+}
+
+.status-tag {
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tag-active {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.tag-checked_in {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.tag-no_show {
+  background: #fee2e2;
+  color: #991b1b;
 }
 </style>

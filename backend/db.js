@@ -42,6 +42,7 @@ db.exec(`
     date TEXT NOT NULL,
     time_slot TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
+    check_in_time TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (seat_id) REFERENCES seats(id)
@@ -51,6 +52,11 @@ db.exec(`
   ON reservations(seat_id, date, time_slot) 
   WHERE status = 'active';
 `);
+
+try {
+  db.exec(`ALTER TABLE reservations ADD COLUMN check_in_time TEXT`);
+} catch (e) {}
+
 
 const adminPassword = bcrypt.hashSync('admin123', 10);
 const userPassword = bcrypt.hashSync('user123', 10);
