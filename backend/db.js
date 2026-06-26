@@ -35,6 +35,11 @@ db.exec(`
     FOREIGN KEY (room_id) REFERENCES rooms(id)
   );
 
+  -- reservations.status 枚举值定义在 reservation.js 的 RESERVATION_STATUS
+  --   active     待签到
+  --   checked_in 已签到
+  --   no_show    未签到
+  --   cancelled  已取消
   CREATE TABLE IF NOT EXISTS reservations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -48,6 +53,7 @@ db.exec(`
     FOREIGN KEY (seat_id) REFERENCES seats(id)
   );
 
+  -- 唯一索引：仅 active 状态参与冲突检测，取消/已签到/未签到不占用座位
   CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_reservation 
   ON reservations(seat_id, date, time_slot) 
   WHERE status = 'active';

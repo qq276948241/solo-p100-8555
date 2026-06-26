@@ -7,7 +7,7 @@
     <div class="alert alert-info">
       今日已预约 <strong>{{ todayStats.count }}</strong> / 2 个时段
       <span v-if="todayStats.slots.length">
-        （已选：{{ todayStats.slots.map(slotLabels[s]).join('、') }}）
+        （已选：{{ todayStats.slots.map(s => slotLabels[s]).join('、') }}）
       </span>
     </div>
     
